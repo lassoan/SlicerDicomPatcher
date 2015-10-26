@@ -193,6 +193,8 @@ class DicomPatcherLogic(ScriptedLoadableModuleLogic):
 
         self.addLog('  Patching...')
 
+        ######################################################
+        # Add missing IDs
         if generateMissingIds:
         
           for tag in requiredTags:
@@ -219,7 +221,10 @@ class DicomPatcherLogic(ScriptedLoadableModuleLogic):
             numberOfSeriesInStudyMap[ds.StudyInstanceUID] = numberOfSeriesInStudyMap[ds.StudyInstanceUID] + 1
             ds.SeriesNumber = numberOfSeriesInStudyMap[ds.StudyInstanceUID]
 
-        if generateImagePositionFromSliceThickness and hasattr(ds,'NumberOfFrames'):
+        ######################################################
+        # Add missing slice spacing info to multiframe files
+        numberOfFrames = ds.NumberOfFrames if hasattr(ds,'NumberOfFrames') else 1
+        if generateImagePositionFromSliceThickness and numberOfFrames>1:
           # Multi-frame sequence, we may need to add slice positions
           
           # Error in Dolphin 3D CBCT scanners, they store multiple frames but they keep using CTImageStorage as storage class
@@ -233,54 +238,59 @@ class DicomPatcherLogic(ScriptedLoadableModuleLogic):
           z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]] # cross(x,y)
           sliceSpacing = ds.SliceThickness if hasattr(ds,'SliceThickness') else 1.0
           pixelSpacing = ds.PixelSpacing if hasattr(ds,'PixelSpacing') else [1.0, 1.0]
-
-          # (5200,9229) SQ (Sequence with undefined length #=1)     # u/l, 1 SharedFunctionalGroupsSequence
-          #   (0020,9116) SQ (Sequence with undefined length #=1)     # u/l, 1 PlaneOrientationSequence
-          #       (0020,0037) DS [1.00000\0.00000\0.00000\0.00000\1.00000\0.00000] #  48, 6 ImageOrientationPatient
-          #   (0028,9110) SQ (Sequence with undefined length #=1)     # u/l, 1 PixelMeasuresSequence
-          #       (0018,0050) DS [3.00000]                                #   8, 1 SliceThickness
-          #       (0028,0030) DS [0.597656\0.597656]                      #  18, 2 PixelSpacing
-
-          planeOrientationDataSet = dicom.dataset.Dataset()
-          planeOrientationDataSet.ImageOrientationPatient = sliceAxes
-          planeOrientationSequence = dicom.sequence.Sequence()
-          planeOrientationSequence.insert(dicom.tag.Tag(0x0020,0x9116),planeOrientationDataSet)
-
-          pixelMeasuresDataSet = dicom.dataset.Dataset()
-          pixelMeasuresDataSet.SliceThickness = sliceSpacing
-          pixelMeasuresDataSet.PixelSpacing = pixelSpacing
-          pixelMeasuresSequence = dicom.sequence.Sequence()
-          pixelMeasuresSequence.insert(dicom.tag.Tag(0x0028,0x9110),pixelMeasuresDataSet)
-
-          sharedFunctionalGroupsDataSet = dicom.dataset.Dataset()
-          sharedFunctionalGroupsDataSet.PlaneOrientationSequence = planeOrientationSequence
-          sharedFunctionalGroupsDataSet.PixelMeasuresSequence = pixelMeasuresSequence
-          sharedFunctionalGroupsSequence = dicom.sequence.Sequence()
-          sharedFunctionalGroupsSequence.insert(dicom.tag.Tag(0x5200,0x9229),sharedFunctionalGroupsDataSet)
-          ds.SharedFunctionalGroupsSequence = sharedFunctionalGroupsSequence
-
-          #(5200,9230) SQ (Sequence with undefined length #=54)    # u/l, 1 PerFrameFunctionalGroupsSequence
-          #  (0020,9113) SQ (Sequence with undefined length #=1)     # u/l, 1 PlanePositionSequence
-          #    (0020,0032) DS [-94.7012\-312.701\-806.500]             #  26, 3 ImagePositionPatient
-          #  (0020,9113) SQ (Sequence with undefined length #=1)     # u/l, 1 PlanePositionSequence
-          #    (0020,0032) DS [-94.7012\-312.701\-809.500]             #  26, 3 ImagePositionPatient
-          #  ...
-
-          perFrameFunctionalGroupsSequence = dicom.sequence.Sequence()
-          numberOfFrames = ds.NumberOfFrames
-
-          for frameIndex in range(numberOfFrames):
-            planePositionDataSet = dicom.dataset.Dataset()
-            slicePosition = [sliceStartPosition[0]+frameIndex*z[0]*sliceSpacing, sliceStartPosition[1]+frameIndex*z[1]*sliceSpacing, sliceStartPosition[2]+frameIndex*z[2]*sliceSpacing]
-            planePositionDataSet.ImagePositionPatient = slicePosition
-            planePositionSequence = dicom.sequence.Sequence()
-            planePositionSequence.insert(dicom.tag.Tag(0x0020,0x9113),planePositionDataSet)
-            perFrameFunctionalGroupsDataSet = dicom.dataset.Dataset()
-            perFrameFunctionalGroupsDataSet.PlanePositionSequence = planePositionSequence
-            perFrameFunctionalGroupsSequence.insert(dicom.tag.Tag(0x5200,0x9230),perFrameFunctionalGroupsDataSet)
-
-          ds.PerFrameFunctionalGroupsSequence = perFrameFunctionalGroupsSequence
             
+          if not (dicom.tag.Tag(0x5200,0x9229) in ds):
+
+            # (5200,9229) SQ (Sequence with undefined length #=1)     # u/l, 1 SharedFunctionalGroupsSequence
+            #   (0020,9116) SQ (Sequence with undefined length #=1)     # u/l, 1 PlaneOrientationSequence
+            #       (0020,0037) DS [1.00000\0.00000\0.00000\0.00000\1.00000\0.00000] #  48, 6 ImageOrientationPatient
+            #   (0028,9110) SQ (Sequence with undefined length #=1)     # u/l, 1 PixelMeasuresSequence
+            #       (0018,0050) DS [3.00000]                                #   8, 1 SliceThickness
+            #       (0028,0030) DS [0.597656\0.597656]                      #  18, 2 PixelSpacing
+
+            planeOrientationDataSet = dicom.dataset.Dataset()
+            planeOrientationDataSet.ImageOrientationPatient = sliceAxes
+            planeOrientationSequence = dicom.sequence.Sequence()
+            planeOrientationSequence.insert(dicom.tag.Tag(0x0020,0x9116),planeOrientationDataSet)
+
+            pixelMeasuresDataSet = dicom.dataset.Dataset()
+            pixelMeasuresDataSet.SliceThickness = sliceSpacing
+            pixelMeasuresDataSet.PixelSpacing = pixelSpacing
+            pixelMeasuresSequence = dicom.sequence.Sequence()
+            pixelMeasuresSequence.insert(dicom.tag.Tag(0x0028,0x9110),pixelMeasuresDataSet)
+
+            sharedFunctionalGroupsDataSet = dicom.dataset.Dataset()
+            sharedFunctionalGroupsDataSet.PlaneOrientationSequence = planeOrientationSequence
+            sharedFunctionalGroupsDataSet.PixelMeasuresSequence = pixelMeasuresSequence
+            sharedFunctionalGroupsSequence = dicom.sequence.Sequence()
+            sharedFunctionalGroupsSequence.insert(dicom.tag.Tag(0x5200,0x9229),sharedFunctionalGroupsDataSet)
+            ds.SharedFunctionalGroupsSequence = sharedFunctionalGroupsSequence
+
+          if not (dicom.tag.Tag(0x5200,0x9230) in ds):
+
+            #(5200,9230) SQ (Sequence with undefined length #=54)    # u/l, 1 PerFrameFunctionalGroupsSequence
+            #  (0020,9113) SQ (Sequence with undefined length #=1)     # u/l, 1 PlanePositionSequence
+            #    (0020,0032) DS [-94.7012\-312.701\-806.500]             #  26, 3 ImagePositionPatient
+            #  (0020,9113) SQ (Sequence with undefined length #=1)     # u/l, 1 PlanePositionSequence
+            #    (0020,0032) DS [-94.7012\-312.701\-809.500]             #  26, 3 ImagePositionPatient
+            #  ...
+
+            perFrameFunctionalGroupsSequence = dicom.sequence.Sequence()
+
+            for frameIndex in range(numberOfFrames):
+              planePositionDataSet = dicom.dataset.Dataset()
+              slicePosition = [sliceStartPosition[0]+frameIndex*z[0]*sliceSpacing, sliceStartPosition[1]+frameIndex*z[1]*sliceSpacing, sliceStartPosition[2]+frameIndex*z[2]*sliceSpacing]
+              planePositionDataSet.ImagePositionPatient = slicePosition
+              planePositionSequence = dicom.sequence.Sequence()
+              planePositionSequence.insert(dicom.tag.Tag(0x0020,0x9113),planePositionDataSet)
+              perFrameFunctionalGroupsDataSet = dicom.dataset.Dataset()
+              perFrameFunctionalGroupsDataSet.PlanePositionSequence = planePositionSequence
+              perFrameFunctionalGroupsSequence.insert(dicom.tag.Tag(0x5200,0x9230),perFrameFunctionalGroupsDataSet)
+
+            ds.PerFrameFunctionalGroupsSequence = perFrameFunctionalGroupsSequence
+            
+        ######################################################
+        # Anonymize
         if anonymize:
 
           self.addLog('  Anonymizing...')
@@ -307,6 +317,8 @@ class DicomPatcherLogic(ScriptedLoadableModuleLogic):
             seriesUIDToRandomUIDMap[ds.SeriesInstanceUID] = dicom.UID.generate_uid(None)
           ds.SeriesInstanceUID = seriesUIDToRandomUIDMap[ds.SeriesInstanceUID]
 
+        ######################################################
+        # Write
         if inputDirPath==outputDirPath:
           (name, ext) = os.path.splitext(filePath)
           patchedFilePath = name + ('-anon' if anonymize else '') + '-patched' + ext
