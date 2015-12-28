@@ -185,6 +185,9 @@ class DicomPatcherLogic(ScriptedLoadableModuleLogic):
       for file in files:
         filePath = os.path.join(root,file)
         self.addLog('Examining %s...' % os.path.join(currentSubDir,file))
+        if file=='DICOMDIR':
+          self.addLog('DICOMDIR file is ignored (its contents may be inconsistent with the contents of the indexed DICOM files, therefore it is safer not to use it)')
+          continue
         try:
           ds = dicom.read_file(filePath)
         except (IOError, dicom.filereader.InvalidDicomError):
